@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from docutils.nodes import inline
-
 from torch import optim
 
 from abc import ABC, abstractmethod
@@ -10,18 +9,20 @@ import itertools as it
 import torch
 import scipy.sparse as sp
 import numpy as np
+import sys
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+
 
 from sklearn.feature_extraction.text import CountVectorizer
 
 
 
-from .ub import GensimEmbeddedVectorizer
 """
 Key idea: The conditions we pass through all the code
 could be a list of (name, condition_obj) tuples.
 Each condition_obj has an interface to encode a batch
 and (optional) to update its parameters wrt (global) ae loss.
-
 
 
 
@@ -55,6 +56,109 @@ def _check_conditions(conditions, condition_data):
     assert len(condition_data) == len(conditions), "Unexpected number of supplied condition data"
 
     return True
+class AutoEncoderMixin(object):
+    """ Mixin class for all sklearn-like Autoencoders """
+
+    def reconstruct(self, X, y=None):
+        """ Transform data, then inverse transform it """
+        hidden = self.transform(X)
+        return self.inverse_transform(hidden)
+
+
+def peek_word2vec_format(path, binary=False):
+    """
+    Function to peek at the first line of a serialized embedding in
+    word2vec format
+
+    Arguments
+    ---------
+    path: The path to the file to peek
+    binary: Whether the file is gzipped
+
+    Returns
+    -------
+    Tuple of ints split by white space in the first line,
+    i.e., for word2vec format the dimensions of the embedding.
+    """
+    if binary:
+        import gzip
+        with gzip.open(path, 'r') as peek:
+            return map(int, next(peek).strip().split())
+    else:
+        with open(path, 'r') as peek:
+            return map(int, next(peek).strip().split())
+
+
+class EmbeddedVectorizer(TfidfVectorizer):
+
+    """ Weighted Bag-of-embedded-Words"""
+
+    def __init__(self, embedding, index2word, **kwargs):
+        """
+        Arguments
+        ---------
+
+        embedding: V x D embedding matrix
+        index2word: list of words with indices matching V
+        """
+        super(EmbeddedVectorizer, self).__init__(self, vocabulary=index2word,
+                                                 **kwargs)
+        self.embedding = embedding
+
+    def fit(self, raw_documents, y=None):
+        super(EmbeddedVectorizer, self).fit(raw_documents)
+        return self
+
+    def transform(self, raw_documents, __y=None):
+        sparse_scores = super(EmbeddedVectorizer,
+                              self).transform(raw_documents)
+        # Xt is sparse counts
+        return sparse_scores @ self.embedding
+
+    def fit_transform(self, raw_documents, y=None):
+        return self.fit(raw_documents, y).transform(raw_documents, y)
+
+
+class GensimEmbeddedVectorizer(EmbeddedVectorizer):
+    """
+    Shorthand to create an embedded vectorizer using a gensim KeyedVectors
+    object, such that the vocabularies match.
+    """
+
+    def __init__(self, gensim_vectors, **kwargs):
+        """
+        Arguments
+        ---------
+        `gensim_vectors` is expected to have index2word and syn0 defined
+        """
+        index2word = gensim_vectors.index2word
+        embedding = gensim_vectors.vectors
+        super(GensimEmbeddedVectorizer, self).__init__(embedding,
+                                                       index2word,
+                                                       **kwargs)
+class ContinuousCondition(object):
+
+    # def(self,inputs):
+    #     self.inputs = inputs
+    #     return np.array(inputs)
+    # add_part = self(inputs=2)
+    # print(add_part)
+
+    def encode(inputs):
+        inputs = np.array(inputs)
+
+        # Compute x_norm as the norm 2 of x. Use np.linalg.norm(..., ord = 2, axis = ..., keepdims = True)
+        x_norm = np.linalg.norm(inputs, keepdims=True)
+
+        inputs = inputs / x_norm
+
+        return inputs
+
+
+
+# We can also access instances method
+# as list[0].Sum() , list[1].Sum() and so on.
+
 
 class ConditionList(OrderedDict):
     """
@@ -236,7 +340,7 @@ class ConditionBase(ABC):
 
 
     @classmethod
-    def __subclasshook__(cls, C):
+    def __subclasshook__(cls, C): #method to check whether a class is a subclass or not and returns True
         if cls is ConditionBase:
             # Check if abstract parts of interface are satisified
             mro = C.__mro__
@@ -380,6 +484,7 @@ class EmbeddingBagCondition(ConcatenationBasedConditioning):
         self.embedding_dim = embedding_dim
 
     def encode(self, inputs):
+
         return self.embedding_bag(inputs)
 
     def zero_grad(self):
@@ -442,6 +547,7 @@ class CategoricalCondition(ConcatenationBasedConditioning):
         """ Learn a vocabulary """
         flat_items = raw_inputs if self.reduce is None else list(it.chain.from_iterable(raw_inputs))
         if self.vocab_size is None:
+
             # if vocab size is None, use all items
             cutoff = len(flat_items)
         elif isinstance(self.vocab_size, float):
