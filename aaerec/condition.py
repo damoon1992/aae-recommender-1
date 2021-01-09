@@ -15,7 +15,89 @@ from sklearn.feature_extraction.text import CountVectorizer
 
 
 
-from .ub import GensimEmbeddedVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+
+class AutoEncoderMixin(object):
+    """ Mixin class for all sklearn-like Autoencoders """
+
+    def reconstruct(self, X, y=None):
+        """ Transform data, then inverse transform it """
+        hidden = self.transform(X)
+        return self.inverse_transform(hidden)
+
+
+def peek_word2vec_format(path, binary=False):
+    """
+    Function to peek at the first line of a serialized embedding in
+    word2vec format
+
+    Arguments
+    ---------
+    path: The path to the file to peek
+    binary: Whether the file is gzipped
+
+    Returns
+    -------
+    Tuple of ints split by white space in the first line,
+    i.e., for word2vec format the dimensions of the embedding.
+    """
+    if binary:
+        import gzip
+        with gzip.open(path, 'r') as peek:
+            return map(int, next(peek).strip().split())
+    else:
+        with open(path, 'r') as peek:
+            return map(int, next(peek).strip().split())
+
+
+class EmbeddedVectorizer(TfidfVectorizer):
+
+    """ Weighted Bag-of-embedded-Words"""
+
+    def __init__(self, embedding, index2word, **kwargs):
+        """
+        Arguments
+        ---------
+
+        embedding: V x D embedding matrix
+        index2word: list of words with indices matching V
+        """
+        super(EmbeddedVectorizer, self).__init__(self, vocabulary=index2word,
+                                                 **kwargs)
+        self.embedding = embedding
+
+    def fit(self, raw_documents, y=None):
+        super(EmbeddedVectorizer, self).fit(raw_documents)
+        return self
+
+    def transform(self, raw_documents, __y=None):
+        sparse_scores = super(EmbeddedVectorizer,
+                              self).transform(raw_documents)
+        # Xt is sparse counts
+        return sparse_scores @ self.embedding
+
+    def fit_transform(self, raw_documents, y=None):
+        return self.fit(raw_documents, y).transform(raw_documents, y)
+
+
+class GensimEmbeddedVectorizer(EmbeddedVectorizer):
+    """
+    Shorthand to create an embedded vectorizer using a gensim KeyedVectors
+    object, such that the vocabularies match.
+    """
+
+    def __init__(self, gensim_vectors, **kwargs):
+        """
+        Arguments
+        ---------
+        `gensim_vectors` is expected to have index2word and syn0 defined
+        """
+        index2word = gensim_vectors.index2word
+        embedding = gensim_vectors.vectors
+        super(GensimEmbeddedVectorizer, self).__init__(embedding,
+                                                       index2word,
+                                                       **kwargs)
 """
 Key idea: The conditions we pass through all the code
 could be a list of (name, condition_obj) tuples.
@@ -55,7 +137,22 @@ def _check_conditions(conditions, condition_data):
     assert len(condition_data) == len(conditions), "Unexpected number of supplied condition data"
 
     return True
+class Person:
+    def __init__(self, name, age):
+        self.name = name
+        self.age = age
 
+        # a class method to create a
+
+    # Person object by birth year.
+    def fromBirthYear(cls, name, year):
+        return cls(name, date.today().year - year)
+
+        # a static method to check if a
+
+    # Person is adult or not.
+    def isAdult(age):
+        return age > 18
 class ConditionList(OrderedDict):
     """
     Condition list is an ordered dict with attribute names as keys and
@@ -529,12 +626,12 @@ class Condition(ConditionBase):
                  mode="concat", size_increment=0, dim=1):
         if encoder is not None:
             assert callable(encoder)
-        assert mode in ["concat", "bias", "scale"]
-        if mode == "concat":
-            assert size_increment > 0, "Specify size increment in concat mode"
-        else:
-            assert size_increment == 0,\
-                "Size increment should be zero in bias or scale modes"
+        # assert mode in ["concat", "bias", "scale"]
+        # if mode == "concat":
+        #     assert size_increment > 0, "Specify size increment in concat mode"
+        # else:
+        #     assert size_increment == 0,\
+        #         "Size increment should be zero in bias or scale modes"
         if preprocessor is not None:
             assert hasattr(preprocessor, 'fit'),\
                 "Preprocessor has no fit method"
@@ -600,3 +697,48 @@ class Condition(ConditionBase):
     def eval(self):
         if self.encoder is not None:
             self.encoder.eval()
+
+class ContinuousCondition(ConcatenationBasedConditioning):
+    def __init__(self, axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
+                 momentum=0.999, mode='train'):
+        super().__init__()
+        self._axis = axis
+        self._epsilon = epsilon
+        self._center = center
+        self._scale = scale
+        self._momentum = momentum
+        self._mode = mode
+
+    def encode(self, inputs):
+        """Computes batch normalization as part of a forward pass in the model."""
+        running_mean, running_var, n_batches = self.state
+        if self._mode == 'train':
+            n_batches += 1
+            mean, var = self._fast_mean_and_variance(x)
+            # Gather smoothed input statistics for later use in evals or inference.
+            running_mean = _exponentially_smoothed(self._momentum, running_mean, mean)
+            running_var = _exponentially_smoothed(self._momentum, running_var, var)
+            self.state = (running_mean, running_var, n_batches)
+        else:
+            mean = running_mean
+            var = running_var
+
+        z = self._z_score(x, mean, var)
+        beta, gamma = self._beta_gamma_with_correct_axes(x, self.weights)
+
+        # Return the z rescaled by the parameters if requested.
+        if self._center and self._scale:
+            output = gamma * z + beta
+        elif self._center:
+            output = z + beta
+        elif self._scale:
+            output = gamma * z
+        else:
+            output = z
+        if output.dtype != x.dtype:
+            raise TypeError(f'The dtype of the output ({output.dtype}) of batch '
+                            f'norm is not the same as the input ({x.dtype}). '
+                            f'Batch norm should not change the dtype.')
+        return output
+
+  
