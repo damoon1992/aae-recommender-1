@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from docutils.nodes import inline
-
+from gensim.models import doc2vec
 from torch import optim
 
 from abc import ABC, abstractmethod
@@ -27,7 +27,7 @@ class AutoEncoderMixin(object):
         return self.inverse_transform(hidden)
 
 
-def peek_word2vec_format(path, binary=False):
+def peek_word2vec_format(path, binary=True):
     """
     Function to peek at the first line of a serialized embedding in
     word2vec format
@@ -55,7 +55,7 @@ class EmbeddedVectorizer(TfidfVectorizer):
 
     """ Weighted Bag-of-embedded-Words"""
 
-    def __init__(self, embedding, index2word, **kwargs):
+    def __init__(self, embedding,doc2vec, index2word, **kwargs):
         """
         Arguments
         ---------
@@ -95,7 +95,7 @@ class GensimEmbeddedVectorizer(EmbeddedVectorizer):
         """
         index2word = gensim_vectors.index2word
         embedding = gensim_vectors.vectors
-        super(GensimEmbeddedVectorizer, self).__init__(embedding,
+        super(GensimEmbeddedVectorizer, self).__init__(embedding,doc2vec,
                                                        index2word,
                                                        **kwargs)
 """
@@ -137,22 +137,12 @@ def _check_conditions(conditions, condition_data):
     assert len(condition_data) == len(conditions), "Unexpected number of supplied condition data"
 
     return True
-class Person:
-    def __init__(self, name, age):
-        self.name = name
-        self.age = age
+
 
         # a class method to create a
 
     # Person object by birth year.
-    def fromBirthYear(cls, name, year):
-        return cls(name, date.today().year - year)
 
-        # a static method to check if a
-
-    # Person is adult or not.
-    def isAdult(age):
-        return age > 18
 class ConditionList(OrderedDict):
     """
     Condition list is an ordered dict with attribute names as keys and
@@ -163,18 +153,24 @@ class ConditionList(OrderedDict):
 
     def __init__(self, items):
         super(ConditionList, self).__init__(items)
+
         assert all(isinstance(v, ConditionBase) for v in self.values())
+
 
     def fit(self, raw_inputs):
         """ Fits all conditions to data """
         assert len(raw_inputs) == len(self)
         for cond, cond_inp in zip(self.values(), raw_inputs):
+
             cond.fit(cond_inp)
+            t=cond.fit(cond_inp)
+            print("t",t)
         return self
 
     def transform(self, raw_inputs):
         """ Transforms `raw_inputs` with all conditions """
         assert len(raw_inputs) == len(self)
+        print("len",len(raw_inputs))
         return [c.transform(inp) for c, inp in zip(self.values(), raw_inputs)]
 
     def fit_transform(self, raw_inputs):
@@ -193,6 +189,7 @@ class ConditionList(OrderedDict):
         assert len(condition_inputs) == len(self)
         for condition, condition_input in zip(self.values(), condition_inputs):
             x = condition.encode_impose(x, condition_input, dim)
+
         return x
 
     def encode(self, condition_inputs):
@@ -212,14 +209,36 @@ class ConditionList(OrderedDict):
         """ Forward the step call to all conditions in list,
         such that these can update their individual parameters"""
         for condition in self.values():
+            print("self",self.values())
             condition.step()
         return self
-
-    def size_increment(self):
+    #
+    # def size_increment(self):
         """ Aggregates sizes from various conditions
         for convenience use in determining decoder properties
         """
+
+    def size_increment(self):
+        # if self.values()==int(self.values()):
+        #     return  sum(v.size_increment() for v in self.values())
+        # else :
         return sum(v.size_increment() for v in self.values())
+
+
+            # if seen is None:
+            #     seen = set()
+            # obj_id = id(self)
+            # if obj_id in seen:
+            #     return 0
+            # seen.add(obj_id)
+            # elif hasattr(size_increment, '__dict__'):
+            #     size += size_increment(self.__dict__, seen)
+            # elif hasattr(self, '__iter__') and not isinstance(self, (str, bytes, bytearray)):
+            #     size += sum([size_increment(i, seen) for i in self])
+
+        # print("ss",self.values())
+#        sum+=sum(v.size_increment() for v in self.values())
+
 
     def train(self):
         # Put all modules into train mode, if they has such a method
@@ -276,6 +295,7 @@ class ConditionBase(ABC):
     # Condition can encode the raw input and knows how to impose itself to data
     def encode(self, inputs):
         """ Encodes the input for the condition """
+
         return inputs
 
     @abstractmethod
@@ -361,11 +381,16 @@ class CountCondition(ConditionBase):
         self.cv = CountVectorizer(binary=True, **cv_params)
 
     def fit(self, raw_inputs):
+
         self.cv.fit(raw_inputs)
+
+
         return self
 
     def transform(self, raw_inputs):
         return self.cv.transform(raw_inputs)
+
+
 
     def fit_transform(self, raw_inputs):
         return self.cv.fit_transform(raw_inputs)
@@ -398,16 +423,19 @@ class ConcatenationBasedConditioning(ConditionBase):
     """
     A `ConditionBase` subclass to implement concatenation based conditioning.
     """
-    # Subclasses still need to specify .size_increment()
+    #
     # as concatenation based
     dim = 1
 
-    @abstractmethod
+    #@abstractmethod
     def size_increment(self):
+  # use here str(value)
+
         """ Subclasses need to specify size increment """
 
     def impose(self, inputs, encoded_condition, dim=None):
         """ Concat condition at specified dimension (default 1) """
+
         if dim is None:
             dim = self.dim
         return torch.cat([inputs, encoded_condition], dim=dim)
@@ -449,6 +477,7 @@ class PretrainedWordEmbeddingCondition(ConcatenationBasedConditioning):
 
     def fit(self, raw_inputs):
         self.vect.fit(raw_inputs)
+
         return self
 
     def transform(self, raw_inputs):
@@ -458,8 +487,10 @@ class PretrainedWordEmbeddingCondition(ConcatenationBasedConditioning):
         return self.vect.fit_transform(raw_inputs)
 
     def encode(self, inputs):
+
         # GensimEmbeddedVectorizer yields numpy array
         return torch.as_tensor(inputs, dtype=torch.float32, device=self.device)
+
 
     def size_increment(self):
         # Return embedding dimension
@@ -477,7 +508,9 @@ class EmbeddingBagCondition(ConcatenationBasedConditioning):
         self.embedding_dim = embedding_dim
 
     def encode(self, inputs):
+
         return self.embedding_bag(inputs)
+
 
     def zero_grad(self):
         self.optimizer.zero_grad()
@@ -537,7 +570,11 @@ class CategoricalCondition(ConcatenationBasedConditioning):
 
     def fit(self, raw_inputs):
         """ Learn a vocabulary """
+
         flat_items = raw_inputs if self.reduce is None else list(it.chain.from_iterable(raw_inputs))
+        print("raw",flat_items)
+
+
         if self.vocab_size is None:
             # if vocab size is None, use all items
             cutoff = len(flat_items)
@@ -577,6 +614,7 @@ class CategoricalCondition(ConcatenationBasedConditioning):
 
     def _pad_batch(self, batch_inputs):
         maxlen = max(len(l) for l in batch_inputs)
+
         return [l + [self.padding_idx] * (maxlen - len(l)) for l in batch_inputs]
 
     def encode(self, inputs):
@@ -584,12 +622,19 @@ class CategoricalCondition(ConcatenationBasedConditioning):
             # inputs may have variable lengths, pad them
             inputs = self._pad_batch(inputs)
         inputs = torch.tensor(inputs, device=self.embedding.weight.device)
+        print("iin", inputs)
+
         h = self.embedding(inputs)
+
+
         if self.reduce is not None:
             # self.reduce in ['mean','sum','max']
             h = getattr(h, self.reduce)(1)
         if self.use_cuda:
             h = h.cuda()
+
+
+
         return h
 
     def zero_grad(self):
@@ -626,11 +671,11 @@ class Condition(ConditionBase):
                  mode="concat", size_increment=0, dim=1):
         if encoder is not None:
             assert callable(encoder)
-        # assert mode in ["concat", "bias", "scale"]
-        # if mode == "concat":
-        #     assert size_increment > 0, "Specify size increment in concat mode"
-        # else:
-        #     assert size_increment == 0,\
+        assert mode in ["concat", "bias", "scale"]
+        if mode == "concat":
+            assert size_increment > 0, "Specify size increment in concat mode"
+        else:
+            assert size_increment == 0
         #         "Size increment should be zero in bias or scale modes"
         if preprocessor is not None:
             assert hasattr(preprocessor, 'fit'),\
@@ -699,46 +744,164 @@ class Condition(ConditionBase):
             self.encoder.eval()
 
 class ContinuousCondition(ConcatenationBasedConditioning):
-    def __init__(self, axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
-                 momentum=0.999, mode='train'):
-        super().__init__()
-        self._axis = axis
+    padding_idx = 0
+
+    def __init__(self,embedding_dim,embedding_on_gpu=False,use_cuda=torch.cuda.is_available(),sparse=True,lr=1e-3,
+                 reduce=None,vocab_size=None, axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,momentum=0.999,**embedding_params,):
+        assert reduce is None or reduce in ['mean', 'sum', 'max'], "Reduce neither None nor in 'mean','sum','max'"
+
+        self.embedding=None
+        self.lr=lr
         self._epsilon = epsilon
         self._center = center
+        self.use_cuda=use_cuda
         self._scale = scale
+        self.sparse=sparse
+        self.embedding_on_gpu=embedding_on_gpu
         self._momentum = momentum
-        self._mode = mode
+        self.reduce=reduce
+        self.vocab_size=vocab_size
+        self.embedding_dim=embedding_dim
+        self.embedding_params = embedding_params
+        assert "padding_idx" not in embedding_params
+
+        # if encoder is not None:
+        #     assert callable(encoder)
+        # assert mode in ["concat", "bias", "scale"]
+        # if mode == "concat":
+        #     assert size_increment > 0, "Specify size increment in concat mode"
+        # else:
+        #     assert size_increment == 0
+
+
+    def fit(self, raw_inputs):
+        """ Learn a vocabulary """
+
+        flat_items1 = np.array(raw_inputs)
+        print("raw",flat_items1)
+        print("raw2",flat_items1[2])
+        if self.vocab_size is None:
+            # if vocab size is None, use all items
+            cutoff = len(flat_items1)
+        item_cnt = Counter(flat_items1).most_common(cutoff)
+        print("item_cnt",item_cnt)
+        self.vocab = {value: idx + 1 for idx, (value, __) in enumerate(item_cnt)}
+        num_embeddings = len(self.vocab) + 1
+        self.embedding = nn.Embedding(num_embeddings,
+                                      self.embedding_dim,
+                                      padding_idx=self.padding_idx,
+                                      **self.embedding_params,
+                                      sparse=self.sparse)
+        if self.use_cuda and self.embedding_on_gpu:
+            # Put the embedding on GPU only when wanted
+            self.embedding = self.embeddin.g.cuda()
+
+        if self.sparse:
+            self.optimizer = optim.SparseAdam(self.embedding.parameters(), lr=self.lr)
+        else:
+            self.optimizer = optim.Adam(self.embedding.parameters(), lr=self.lr)
+        return self
+
+    def transform(self, raw_inputs):
+        # Actually np.array is not needed,
+        # else we would need to do the padding globally
+        if self.reduce is None:
+            return [self.vocab.get(x, self.padding_idx) for x in raw_inputs]
+        else:
+          return [[self.vocab.get(x, self.padding_idx) for x in l] for l in raw_inputs]
 
     def encode(self, inputs):
-        """Computes batch normalization as part of a forward pass in the model."""
-        running_mean, running_var, n_batches = self.state
-        if self._mode == 'train':
-            n_batches += 1
-            mean, var = self._fast_mean_and_variance(x)
-            # Gather smoothed input statistics for later use in evals or inference.
-            running_mean = _exponentially_smoothed(self._momentum, running_mean, mean)
-            running_var = _exponentially_smoothed(self._momentum, running_var, var)
-            self.state = (running_mean, running_var, n_batches)
-        else:
-            mean = running_mean
-            var = running_var
+        self.reduce = reduce
+        # if self.reduce is not None:
+            # inputs may have variable lengths, pad them
+        inputs = self.raw_inputs(inputs)
+        print("iin", inputs)
+        h = self.embedding(inputs)
 
-        z = self._z_score(x, mean, var)
-        beta, gamma = self._beta_gamma_with_correct_axes(x, self.weights)
+        if self.reduce is not None:
+            # self.reduce in ['mean','sum','max']
+            h = getattr(h, self.reduce)(1)
+        if self.use_cuda:
+            h = h.cuda()
 
-        # Return the z rescaled by the parameters if requested.
-        if self._center and self._scale:
-            output = gamma * z + beta
-        elif self._center:
-            output = z + beta
-        elif self._scale:
-            output = gamma * z
-        else:
-            output = z
-        if output.dtype != x.dtype:
-            raise TypeError(f'The dtype of the output ({output.dtype}) of batch '
-                            f'norm is not the same as the input ({x.dtype}). '
-                            f'Batch norm should not change the dtype.')
-        return output
+        return h
 
-  
+    #     """ Fit to `raw_inputs`, then transform `raw_inputs`. """
+    #     return self.fit(raw_inputs).transform(raw_inputs)
+    # def encode(self, inputs):
+    #     if self.encoder is not None:
+    #         return self.enco
+    #         der(inputs)
+    #     return inputs
+    #     print("raw",flat_items1)
+
+    # def __init__(,self,
+    #              lr=1e-3,
+    #              ):
+    #     self.lr = lr
+
+        # Optimization and memory storay
+
+        # We take care of vocab handling & padding ourselves
+
+
+
+    # def __init__(self, axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
+    #              momentum=0.999, mode='train'):
+    #     super().__init__()
+    #     self._axis = axis
+    #     # epsilon: small float > 0. Fuzz parameter. Theano expects epsilon >= 1e-5.
+    #     self._epsilon = epsilon
+    #     self._center = center
+    #     self._scale = scale
+    #     self._momentum = momentum
+    #     self._mode = mode
+    #
+    # def encode(self, inputs):
+    #     """Computes batch normalization as part of a forward pass in the model."""
+    #     running_mean, running_var, n_batches = self.state
+    #     if self._mode == 'train':
+    #         n_batches += 1
+    #         mean, var = self._fast_mean_and_variance(x)
+    #         # Gather smoothed input statistics for later use in evals or inference.
+    #         running_mean = _exponentially_smoothed(self._momentum, running_mean, mean)
+    #         running_var = _exponentially_smoothed(self._momentum, running_var, var)
+    #         self.state = (running_mean, running_var, n_batches)
+    #     else:
+    #         mean = running_mean
+    #         var = running_var
+    #
+    #     z = self._z_score(x, mean, var)
+    #     beta, gamma = self._beta_gamma_with_correct_axes(x, self.weights)
+    #
+    #     # Return the z rescaled by the parameters if requested.
+    #     if self._center and self._scale:
+    #         output = gamma * z + beta
+    #     elif self._center:
+    #         output = z + beta
+    #     elif self._scale:
+    #         output = gamma * z
+    #     else:
+    #         output = z
+    #     if output.dtype != x.dtype:
+    #         raise TypeError(f'The dtype of the output ({output.dtype}) of batch '
+    #                         f'norm is not the same as the input ({x.dtype}). '
+    #                         f'Batch norm should not change the dtype.')
+    #     return output
+
+    # def encode(self, inputs):
+    #
+    #     if self.reduce is not None:
+    #         # inputs may have variable lengths, pad them
+    #         inputs = self._pad_batch(inputs)
+    #     inputs = np.array(inputs)
+    #     x_norm = np.linalg.norm(x, keepdims=True)
+    #     inputs = inputs / x_norm
+    #     return inputs
+    #
+    #     # return torch.as_tensor(inputs, dtype=torch.float32, device=self.device)
+    #
+    #
+    # def size_increment(self):
+    #     # Return embedding dimension
+    #     return self.vect.embedding.shape[1]
