@@ -3,6 +3,8 @@ import torch.nn as nn
 from docutils.nodes import inline
 from gensim.models import doc2vec
 from torch import optim
+import tensorflow as tf
+import numpy
 
 from abc import ABC, abstractmethod
 from collections import OrderedDict, Counter
@@ -584,11 +586,14 @@ class CategoricalCondition(ConcatenationBasedConditioning):
         else:
             # else use fixed vocab size or None, which is fine aswell
             cutoff = int(self.vocab_size)
+            print("cutoff",cutoff)
         print("Using top {:.2f}% authors ({})".format(cutoff / len(flat_items) * 100, cutoff))
 
         item_cnt = Counter(flat_items).most_common(cutoff)
+        print("item",item_cnt)
         # index 0 is reserved for unk idx
         self.vocab = {value: idx + 1 for idx, (value, __) in enumerate(item_cnt)}
+        print("vocab",self.vocab)
         num_embeddings = len(self.vocab) + 1
         self.embedding = nn.Embedding(num_embeddings,
                                       self.embedding_dim,
@@ -779,14 +784,21 @@ class ContinuousCondition(ConcatenationBasedConditioning):
 
         flat_items1 = np.array(raw_inputs)
         print("raw",flat_items1)
-        print("raw2",flat_items1[2])
         if self.vocab_size is None:
             # if vocab size is None, use all items
             cutoff = len(flat_items1)
-        item_cnt = Counter(flat_items1).most_common(cutoff)
-        print("item_cnt",item_cnt)
-        self.vocab = {value: idx + 1 for idx, (value, __) in enumerate(item_cnt)}
-        num_embeddings = len(self.vocab) + 1
+            print("cutoff1",cutoff)
+        elif isinstance(self.vocab_size, float):
+            # if vocab size is float, interprete it as percentage of top items (authors)
+            cutoff = int(self.vocab_size * len(flat_items))
+        else:
+            # else use fixed vocab size or None, which is fine aswell
+            cutoff = int(self.vocab_size)
+            print("cutoff",cutoff)
+        item_cnt1 = Counter(flat_items1).most_common(cutoff)
+        print("item_cnt",item_cnt1)
+        self.vocab = {value: idx + 1 for idx, (value, __) in enumerate(item_cnt1)}
+        num_embeddings = len(flat_items1) + 1
         self.embedding = nn.Embedding(num_embeddings,
                                       self.embedding_dim,
                                       padding_idx=self.padding_idx,
@@ -805,27 +817,58 @@ class ContinuousCondition(ConcatenationBasedConditioning):
     def transform(self, raw_inputs):
         # Actually np.array is not needed,
         # else we would need to do the padding globally
-        if self.reduce is None:
-            return [self.vocab.get(x, self.padding_idx) for x in raw_inputs]
-        else:
-          return [[self.vocab.get(x, self.padding_idx) for x in l] for l in raw_inputs]
+        return [self.vocab.get(x, self.padding_idx) for x in raw_inputs]
+    def size_increment(self):
+        return self.embedding_dim
+
+    # def _pad_batch(self, batch_inputs):
+    #
+    #     return self.padding_idx
+    # print("iin2",padding_idx)
+
 
     def encode(self, inputs):
-        self.reduce = reduce
-        # if self.reduce is not None:
-            # inputs may have variable lengths, pad them
-        inputs = self.raw_inputs(inputs)
-        print("iin", inputs)
-        h = self.embedding(inputs)
-
         if self.reduce is not None:
-            # self.reduce in ['mean','sum','max']
-            h = getattr(h, self.reduce)(1)
-        if self.use_cuda:
-            h = h.cuda()
+            # inputs may have variable lengths, pad them
+            # inputs = self._pad_batch(inputs)
+            # print("iin2",inputs)
 
-        return h
+            amin, amax = min(inputs), max(inputs)
+            for i, val in enumerate(inputs):
+                if amax==amin :
+                    inputs[i]==1
+                else :
+                    inputs[i] = (val - amin) / (amax - amin)
 
+            print("inp",inputs)
+            #
+            # inputs = (inputs - min(inputs)) / (max(inputs) - min(inputs))
+            inputs = torch.tensor(inputs)
+            inputs = inputs.type(torch.LongTensor)
+
+            print("iin3",inputs)
+
+        h1 = self.embedding(inputs)
+        print("hh",h1)
+
+        #
+        # if self.reduce is not None:
+        #     # self.reduce in ['mean','sum','max']
+        #     h = getattr(h, self.reduce)(1)
+        # if self.use_cuda:
+        #     h = h.cuda()
+        #
+
+
+        return h1
+
+    def zero_grad(self):
+        self.optimizer.zero_grad()
+
+    def step(self):
+        # loss.backward() to be called before by client (such as in ae_step)
+        # The condition object can update its own parameters wrt global loss
+        self.optimizer.step()
     #     """ Fit to `raw_inputs`, then transform `raw_inputs`. """
     #     return self.fit(raw_inputs).transform(raw_inputs)
     # def encode(self, inputs):
