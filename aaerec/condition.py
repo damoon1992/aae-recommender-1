@@ -12,6 +12,7 @@ import itertools as it
 import torch
 import scipy.sparse as sp
 import numpy as np
+from tensorflow import keras
 
 from sklearn.feature_extraction.text import CountVectorizer
 
@@ -775,10 +776,10 @@ class ContinuousCondition(ConcatenationBasedConditioning):
     def fit(self, raw_inputs):
         """ Learn a vocabulary """
 
-        flat_items1 = np.array(raw_inputs)
-        print("raw",flat_items1)
+        number_feature = np.array(raw_inputs)
+        print("raw",number_feature)
         if self.vocab_size is None:
-            cutoff = len(flat_items1)
+            cutoff = len(number_feature)
             print("cutoff1",cutoff)
         elif isinstance(self.vocab_size, float):
             # if vocab size is float, interprete it as percentage of top items (authors)
@@ -787,10 +788,10 @@ class ContinuousCondition(ConcatenationBasedConditioning):
             # else use fixed vocab size or None, which is fine aswell
             cutoff = int(self.vocab_size)
             print("cutoff",cutoff)
-        item_cnt1 = Counter(flat_items1).most_common(cutoff)
+        item_cnt1 = Counter(number_feature).most_common(cutoff)
         print("item_cnt",item_cnt1)
         self.vocab = {value: idx + 1 for idx, (value, __) in enumerate(item_cnt1)}
-        num_embeddings = len(flat_items1) + 1
+        num_embeddings = len(number_feature) + 1
         print("raww",num_embeddings)
 
         self.embedding = nn.Embedding(num_embeddings,
@@ -825,7 +826,7 @@ class ContinuousCondition(ConcatenationBasedConditioning):
             else :
                 inputs = (inputs - amin) / (amax - amin)
 
-            print("inp",inputs)
+            print("input_number",inputs)
             #
             # inputs = (inputs - min(inputs)) / (max(inputs) - min(inputs))
             inputs = torch.tensor(inputs)
@@ -834,7 +835,7 @@ class ContinuousCondition(ConcatenationBasedConditioning):
             # print("iin3",inputs)
 
         h1 = self.embedding(inputs)
-        print("hh",h1)
+        print("embedding_number",h1)
 
         #
         # if self.reduce is not None:
@@ -855,4 +856,81 @@ class ContinuousCondition(ConcatenationBasedConditioning):
         # The condition object can update its own parameters wrt global loss
         self.optimizer.step()
     #     """ Fit to `raw_inputs`, then transform `raw_inputs`. """
+    #     return self.fit(raw_inputs).transform(raw_inputs)
+    # def encode(self, inputs):
+    #     if self.encoder is not None:
+    #         return self.enco
+    #         der(inputs)
+    #     return inputs
+    #     print("raw",flat_items1)
 
+    # def __init__(,self,
+    #              lr=1e-3,
+    #              ):
+    #     self.lr = lr
+
+        # Optimization and memory storay
+
+        # We take care of vocab handling & padding ourselves
+
+
+
+    # def __init__(self, axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
+    #              momentum=0.999, mode='train'):
+    #     super().__init__()
+    #     self._axis = axis
+    #     # epsilon: small float > 0. Fuzz parameter. Theano expects epsilon >= 1e-5.
+    #     self._epsilon = epsilon
+    #     self._center = center
+    #     self._scale = scale
+    #     self._momentum = momentum
+    #     self._mode = mode
+    #
+    # def encode(self, inputs):
+    #     """Computes batch normalization as part of a forward pass in the model."""
+    #     running_mean, running_var, n_batches = self.state
+    #     if self._mode == 'train':
+    #         n_batches += 1
+    #         mean, var = self._fast_mean_and_variance(x)
+    #         # Gather smoothed input statistics for later use in evals or inference.
+    #         running_mean = _exponentially_smoothed(self._momentum, running_mean, mean)
+    #         running_var = _exponentially_smoothed(self._momentum, running_var, var)
+    #         self.state = (running_mean, running_var, n_batches)
+    #     else:
+    #         mean = running_mean
+    #         var = running_var
+    #
+    #     z = self._z_score(x, mean, var)
+    #     beta, gamma = self._beta_gamma_with_correct_axes(x, self.weights)
+    #
+    #     # Return the z rescaled by the parameters if requested.
+    #     if self._center and self._scale:
+    #         output = gamma * z + beta
+    #     elif self._center:
+    #         output = z + beta
+    #     elif self._scale:
+    #         output = gamma * z
+    #     else:
+    #         output = z
+    #     if output.dtype != x.dtype:
+    #         raise TypeError(f'The dtype of the output ({output.dtype}) of batch '
+    #                         f'norm is not the same as the input ({x.dtype}). '
+    #                         f'Batch norm should not change the dtype.')
+    #     return output
+
+    # def encode(self, inputs):
+    #
+    #     if self.reduce is not None:
+    #         # inputs may have variable lengths, pad them
+    #         inputs = self._pad_batch(inputs)
+    #     inputs = np.array(inputs)
+    #     x_norm = np.linalg.norm(x, keepdims=True)
+    #     inputs = inputs / x_norm
+    #     return inputs
+    #
+    #     # return torch.as_tensor(inputs, dtype=torch.float32, device=self.device)
+    #
+    #
+    # def size_increment(self):
+    #     # Return embedding dimension
+    #     return self.vect.embedding.shape[1]
