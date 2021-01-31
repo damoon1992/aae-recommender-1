@@ -1,18 +1,22 @@
 import torch
 import torch.nn as nn
+from sklearn.preprocessing import MinMaxScaler
 from docutils.nodes import inline
 from gensim.models import doc2vec
 from torch import optim
-
+import tensorflow as tf
+import numpy
+from sklearn.feature_extraction import DictVectorizer
 from abc import ABC, abstractmethod
 from collections import OrderedDict, Counter
 import itertools as it
-import torch
 import scipy.sparse as sp
 import numpy as np
-
+from tensorflow import keras
 from sklearn.feature_extraction.text import CountVectorizer
+import traceback
 
+from torch.utils.data import DataLoader, TensorDataset
 
 
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -95,6 +99,7 @@ class GensimEmbeddedVectorizer(EmbeddedVectorizer):
         """
         index2word = gensim_vectors.index2word
         embedding = gensim_vectors.vectors
+
         super(GensimEmbeddedVectorizer, self).__init__(embedding,doc2vec,
                                                        index2word,
                                                        **kwargs)
@@ -135,7 +140,6 @@ def _check_conditions(conditions, condition_data):
     assert isinstance(conditions, ConditionList), "`conditions` no instance of ConditionList"
     assert condition_data and conditions, "Mismatch between condition spec and supplied condition data."
     assert len(condition_data) == len(conditions), "Unexpected number of supplied condition data"
-
     return True
 
 
@@ -164,7 +168,6 @@ class ConditionList(OrderedDict):
 
             cond.fit(cond_inp)
             t=cond.fit(cond_inp)
-            print("t",t)
         return self
 
     def transform(self, raw_inputs):
@@ -190,6 +193,7 @@ class ConditionList(OrderedDict):
         for condition, condition_input in zip(self.values(), condition_inputs):
             x = condition.encode_impose(x, condition_input, dim)
 
+
         return x
 
     def encode(self, condition_inputs):
@@ -209,7 +213,6 @@ class ConditionList(OrderedDict):
         """ Forward the step call to all conditions in list,
         such that these can update their individual parameters"""
         for condition in self.values():
-            print("self",self.values())
             condition.step()
         return self
     #
@@ -470,9 +473,8 @@ class ConditionalScaling(ConditionBase):
 class PretrainedWordEmbeddingCondition(ConcatenationBasedConditioning):
     """ A concatenation-based condition using a pre-trained word embedding """
 
-    def __init__(self, vectors, dim=1, use_cuda=torch.cuda.is_available(), **tfidf_params):
+    def __init__(self, vectors, use_cuda=torch.cuda.is_available(), **tfidf_params):
         self.vect = GensimEmbeddedVectorizer(vectors, **tfidf_params)
-        self.dim = dim
         self.device = torch.device("cuda") if use_cuda else torch.device("cpu")
 
     def fit(self, raw_inputs):
@@ -508,8 +510,10 @@ class EmbeddingBagCondition(ConcatenationBasedConditioning):
         self.embedding_dim = embedding_dim
 
     def encode(self, inputs):
+        print("inpu",inputs  )
 
         return self.embedding_bag(inputs)
+
 
 
     def zero_grad(self):
@@ -584,11 +588,14 @@ class CategoricalCondition(ConcatenationBasedConditioning):
         else:
             # else use fixed vocab size or None, which is fine aswell
             cutoff = int(self.vocab_size)
+            # print("cutoff",cutoff)
         print("Using top {:.2f}% authors ({})".format(cutoff / len(flat_items) * 100, cutoff))
 
         item_cnt = Counter(flat_items).most_common(cutoff)
+        # print("item",item_cnt)
         # index 0 is reserved for unk idx
         self.vocab = {value: idx + 1 for idx, (value, __) in enumerate(item_cnt)}
+        print("vocab",self.vocab)
         num_embeddings = len(self.vocab) + 1
         self.embedding = nn.Embedding(num_embeddings,
                                       self.embedding_dim,
@@ -621,10 +628,13 @@ class CategoricalCondition(ConcatenationBasedConditioning):
         if self.reduce is not None:
             # inputs may have variable lengths, pad them
             inputs = self._pad_batch(inputs)
+            print("maxlen", inputs)
+
         inputs = torch.tensor(inputs, device=self.embedding.weight.device)
-        print("iin", inputs)
+        # print("iin", inputs)
 
         h = self.embedding(inputs)
+
 
 
         if self.reduce is not None:
@@ -744,10 +754,11 @@ class Condition(ConditionBase):
             self.encoder.eval()
 
 class ContinuousCondition(ConcatenationBasedConditioning):
+
     padding_idx = 0
 
-    def __init__(self,embedding_dim,embedding_on_gpu=False,use_cuda=torch.cuda.is_available(),sparse=True,lr=1e-3,
-                 reduce=None,vocab_size=None, axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,momentum=0.999,**embedding_params,):
+    def __init__(self,embedding_dim,dim=1,embedding_on_gpu=False,use_cuda=torch.cuda.is_available(),sparse=True,lr=1e-3,
+                 reduce=None,vocab_size=None, axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,momentum=0.999,**embedding_params):
         assert reduce is None or reduce in ['mean', 'sum', 'max'], "Reduce neither None nor in 'mean','sum','max'"
 
         self.embedding=None
@@ -756,6 +767,7 @@ class ContinuousCondition(ConcatenationBasedConditioning):
         self._center = center
         self.use_cuda=use_cuda
         self._scale = scale
+        self.dim=dim
         self.sparse=sparse
         self.embedding_on_gpu=embedding_on_gpu
         self._momentum = momentum
@@ -765,143 +777,73 @@ class ContinuousCondition(ConcatenationBasedConditioning):
         self.embedding_params = embedding_params
         assert "padding_idx" not in embedding_params
 
-        # if encoder is not None:
-        #     assert callable(encoder)
-        # assert mode in ["concat", "bias", "scale"]
-        # if mode == "concat":
-        #     assert size_increment > 0, "Specify size increment in concat mode"
-        # else:
-        #     assert size_increment == 0
-
 
     def fit(self, raw_inputs):
-        """ Learn a vocabulary """
-
-        flat_items1 = np.array(raw_inputs)
-        print("raw",flat_items1)
-        print("raw2",flat_items1[2])
+        number_feature = raw_inputs
+        print("raw",number_feature)
         if self.vocab_size is None:
-            # if vocab size is None, use all items
-            cutoff = len(flat_items1)
-        item_cnt = Counter(flat_items1).most_common(cutoff)
-        print("item_cnt",item_cnt)
-        self.vocab = {value: idx + 1 for idx, (value, __) in enumerate(item_cnt)}
-        num_embeddings = len(self.vocab) + 1
-        self.embedding = nn.Embedding(num_embeddings,
-                                      self.embedding_dim,
-                                      padding_idx=self.padding_idx,
-                                      **self.embedding_params,
-                                      sparse=self.sparse)
-        if self.use_cuda and self.embedding_on_gpu:
-            # Put the embedding on GPU only when wanted
-            self.embedding = self.embeddin.g.cuda()
-
-        if self.sparse:
-            self.optimizer = optim.SparseAdam(self.embedding.parameters(), lr=self.lr)
+            cutoff = len(number_feature)
+            print("cutoff1",cutoff)
+        elif isinstance(self.vocab_size, float):
+            # if vocab size is float, interprete it as percentage of top items (authors)
+            cutoff = int(self.vocab_size * len(flat_items))
         else:
-            self.optimizer = optim.Adam(self.embedding.parameters(), lr=self.lr)
+            # else use fixed vocab size or None, which is fine aswell
+            cutoff = int(self.vocab_size)
+            print("cutoff",cutoff)
+        item_cnt1 = Counter(number_feature).most_common(cutoff)
+        print("item_cnt",item_cnt1)
+        self.vocab = {value: idx + 1 for idx, (value, __) in enumerate(item_cnt1)}
+        # self.embedding = nn.Embedding(1,len(number_feature), padding_idx=self.padding_idx,**self.embedding_params,sparse=self.sparse)
+        #
+
+        #
+        # if self.sparse:
+        #     self.optimizer = optim.SparseAdam(self.embedding.parameters(), lr=self.lr)
+        # else:
+        #     self.optimizer = optim.Adam(self.embedding.parameters(), lr=self.lr)
         return self
 
-    def transform(self, raw_inputs):
-        # Actually np.array is not needed,
-        # else we would need to do the padding globally
-        if self.reduce is None:
-            return [self.vocab.get(x, self.padding_idx) for x in raw_inputs]
-        else:
-          return [[self.vocab.get(x, self.padding_idx) for x in l] for l in raw_inputs]
+    # def transform(self, raw_inputs):
+    #
+    #     return [self3raw_inputs]
+    def size_increment(self):
+        return self.embedding_dim
+    def _pad_batch(self, batch_inputs):
+        maxlen = max(len(l) for l in batch_inputs)
+
 
     def encode(self, inputs):
-        self.reduce = reduce
-        # if self.reduce is not None:
-            # inputs may have variable lengths, pad them
-        inputs = self.raw_inputs(inputs)
-        print("iin", inputs)
-        h = self.embedding(inputs)
-
         if self.reduce is not None:
-            # self.reduce in ['mean','sum','max']
-            h = getattr(h, self.reduce)(1)
-        if self.use_cuda:
-            h = h.cuda()
+            x= inputs
+            print("x0",x)
 
-        return h
+        arr = np.array([x])
+        lengths = np.linalg.norm(arr, axis=-1)
+        arr[lengths > 0] = arr[lengths > 0] / lengths[lengths > 0]
+        print(arr)
+        # x=np.array([raw])
+        # number_feature= normalize_rows(x)
+        # print(number_feature)
+        number_feature = torch.FloatTensor(arr)
+        print(number_feature)
 
-    #     """ Fit to `raw_inputs`, then transform `raw_inputs`. """
-    #     return self.fit(raw_inputs).transform(raw_inputs)
-    # def encode(self, inputs):
-    #     if self.encoder is not None:
-    #         return self.enco
-    #         der(inputs)
-    #     return inputs
-    #     print("raw",flat_items1)
+        in_features = number_feature.shape[-1]  # = 2
+        print("in_feature",in_features)
+        out_features = in_features
 
-    # def __init__(,self,
-    #              lr=1e-3,
-    #              ):
-    #     self.lr = lr
-
-        # Optimization and memory storay
-
-        # We take care of vocab handling & padding ourselves
+        print("out_features",out_features)
+        self.embedding = nn.Linear(in_features, out_features)
+        self.embedding.weight
+        self.embedding.bias
 
 
 
-    # def __init__(self, axis=(0, 1, 2), epsilon=1e-5, center=True, scale=True,
-    #              momentum=0.999, mode='train'):
-    #     super().__init__()
-    #     self._axis = axis
-    #     # epsilon: small float > 0. Fuzz parameter. Theano expects epsilon >= 1e-5.
-    #     self._epsilon = epsilon
-    #     self._center = center
-    #     self._scale = scale
-    #     self._momentum = momentum
-    #     self._mode = mode
-    #
-    # def encode(self, inputs):
-    #     """Computes batch normalization as part of a forward pass in the model."""
-    #     running_mean, running_var, n_batches = self.state
-    #     if self._mode == 'train':
-    #         n_batches += 1
-    #         mean, var = self._fast_mean_and_variance(x)
-    #         # Gather smoothed input statistics for later use in evals or inference.
-    #         running_mean = _exponentially_smoothed(self._momentum, running_mean, mean)
-    #         running_var = _exponentially_smoothed(self._momentum, running_var, var)
-    #         self.state = (running_mean, running_var, n_batches)
-    #     else:
-    #         mean = running_mean
-    #         var = running_var
-    #
-    #     z = self._z_score(x, mean, var)
-    #     beta, gamma = self._beta_gamma_with_correct_axes(x, self.weights)
-    #
-    #     # Return the z rescaled by the parameters if requested.
-    #     if self._center and self._scale:
-    #         output = gamma * z + beta
-    #     elif self._center:
-    #         output = z + beta
-    #     elif self._scale:
-    #         output = gamma * z
-    #     else:
-    #         output = z
-    #     if output.dtype != x.dtype:
-    #         raise TypeError(f'The dtype of the output ({output.dtype}) of batch '
-    #                         f'norm is not the same as the input ({x.dtype}). '
-    #                         f'Batch norm should not change the dtype.')
-    #     return output
+        h1 = self.embedding(number_feature)
+        print(h1)
+        h1=h1.data
+        print("embedding_number",h1)
 
-    # def encode(self, inputs):
-    #
-    #     if self.reduce is not None:
-    #         # inputs may have variable lengths, pad them
-    #         inputs = self._pad_batch(inputs)
-    #     inputs = np.array(inputs)
-    #     x_norm = np.linalg.norm(x, keepdims=True)
-    #     inputs = inputs / x_norm
-    #     return inputs
-    #
-    #     # return torch.as_tensor(inputs, dtype=torch.float32, device=self.device)
-    #
-    #
-    # def size_increment(self):
-    #     # Return embedding dimension
-    #     return self.vect.embedding.shape[1]
+
+        return h1
+
